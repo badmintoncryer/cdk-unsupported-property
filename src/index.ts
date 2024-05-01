@@ -24,7 +24,10 @@ const extractCfnProperties = async (filePath: string): Promise<string[]> => {
 
   ts.simpleTraverse(ast, {
     enter(node) {
-      if (node.type === 'TSInterfaceDeclaration' && node.id.name.endsWith('Props')) {
+      if (
+        node.type === 'TSInterfaceDeclaration' &&
+        node.id.name.endsWith('Props')
+      ) {
         node.body.body.forEach((prop: any) => {
           if (prop.type === 'TSPropertySignature') {
             properties.push(prop.key.name);
@@ -53,6 +56,6 @@ const main = async () => {
   } catch (error) {
     console.error('Error:', error);
   }
-}
+};
 
 void main();
