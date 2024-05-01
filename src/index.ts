@@ -1,9 +1,11 @@
 // dependencies
 import * as fs from 'fs';
+import * as path from 'path';
 import * as ts from '@typescript-eslint/typescript-estree';
 import { glob } from 'glob';
 
 interface CfnPropsDetails {
+  module: string;
   name: string;
   props: string[];
 }
@@ -11,6 +13,12 @@ interface CfnPropsDetails {
 // 非同期でパターンにマッチするすべてのファイルを検索する関数
 const findTypeScriptFiles = async (srcDir: string): Promise<string[]> => {
   return glob(`${srcDir}/**/*.generated.ts`);
+};
+
+const extractModuleName = (filePath: string): string => {
+  const parts = filePath.split(path.sep);
+  const libIndex = parts.indexOf('lib');
+  return parts[libIndex - 1];
 };
 
 // TypeScriptファイルを解析し、CfnXxxPropsのプロパティを抽出する関数
@@ -30,7 +38,9 @@ const extractCfnProperties = async (filePath: string): Promise<CfnPropsDetails |
     enter(node) {
       if (node.type === 'TSInterfaceDeclaration' && node.id.name.endsWith('Props')) {
         const properties = node.body.body.map((prop: any) => prop.key.name);
+        const moduleName = extractModuleName(filePath);
         result = {
+          module: moduleName,
           name: node.id.name,
           props: properties,
         };
