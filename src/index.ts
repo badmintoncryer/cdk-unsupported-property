@@ -1,8 +1,12 @@
 // dependencies
 import * as fs from 'fs';
-import * as path from 'path';
 import * as ts from '@typescript-eslint/typescript-estree';
 import { glob } from 'glob';
+
+interface CfnPropsDetails {
+  name: string;
+  props: string[];
+}
 
 // 非同期でパターンにマッチするすべてのファイルを検索する関数
 const findTypeScriptFiles = async (srcDir: string): Promise<string[]> => {
@@ -10,7 +14,7 @@ const findTypeScriptFiles = async (srcDir: string): Promise<string[]> => {
 };
 
 // TypeScriptファイルを解析し、CfnXxxPropsのプロパティを抽出する関数
-const extractCfnProperties = async (filePath: string): Promise<string[]> => {
+const extractCfnProperties = async (filePath: string): Promise<CfnPropsDetails | null> => {
   const code = fs.readFileSync(filePath, 'utf8');
   const ast = ts.parse(code, {
     loc: true,
@@ -20,24 +24,21 @@ const extractCfnProperties = async (filePath: string): Promise<string[]> => {
     useJSXTextNode: false,
   });
 
-  const properties: string[] = [];
+  let result: CfnPropsDetails | null = null;
 
   ts.simpleTraverse(ast, {
     enter(node) {
-      if (
-        node.type === 'TSInterfaceDeclaration' &&
-        node.id.name.endsWith('Props')
-      ) {
-        node.body.body.forEach((prop: any) => {
-          if (prop.type === 'TSPropertySignature') {
-            properties.push(prop.key.name);
-          }
-        });
+      if (node.type === 'TSInterfaceDeclaration' && node.id.name.endsWith('Props')) {
+        const properties = node.body.body.map((prop: any) => prop.key.name);
+        result = {
+          name: node.id.name,
+          props: properties,
+        };
       }
     },
   });
 
-  return properties;
+  return result;
 };
 
 const main = async () => {
@@ -46,13 +47,17 @@ const main = async () => {
     console.error('Please provide the directory path');
     process.exit(1);
   }
+  const allPropsDetails: CfnPropsDetails[] = [];
 
   try {
     const files = await findTypeScriptFiles(directoryPath);
     for (const file of files) {
-      const properties = await extractCfnProperties(file);
-      console.log(`Properties in ${path.basename(file)}:`, properties);
+      const propDetails = await extractCfnProperties(file);
+      if (propDetails) {
+        allPropsDetails.push(propDetails);
+      }
     }
+    console.log(JSON.stringify(allPropsDetails, null, 2));
   } catch (error) {
     console.error('Error:', error);
   }
