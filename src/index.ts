@@ -10,10 +10,18 @@ interface CfnPropsDetails {
   props: string[];
 }
 
-// 非同期でパターンにマッチするすべてのファイルを検索する関数
-const findTypeScriptFiles = async (srcDir: string): Promise<string[]> => {
+// 自動生成されたTypeScriptファイルを検索する関数
+const findGeneratedTypeScriptFiles = async (srcDir: string): Promise<string[]> => {
   return glob(`${srcDir}/**/*.generated.ts`);
 };
+
+// 手動作成されたTypeScriptファイルを検索する関数
+const findManualTypeScriptFiles = async (srcDir: string): Promise<string[]> => {
+  return glob(`${srcDir}/**/*.ts`, {
+    ignore: `${srcDir}/**/*.generated.ts`,
+  });
+};
+
 
 const extractModuleName = (filePath: string): string => {
   const parts = filePath.split(path.sep);
@@ -51,23 +59,71 @@ const extractCfnProperties = async (filePath: string): Promise<CfnPropsDetails |
   return result;
 };
 
+const extractCfnConstructorProperties = async (filePath: string): Promise<CfnPropsDetails[]> => {
+  const code = fs.readFileSync(filePath, 'utf8');
+  const ast = ts.parse(code, {
+    loc: true,
+    tokens: true,
+    comment: true,
+    jsx: false,
+    useJSXTextNode: false,
+  });
+
+  const results: CfnPropsDetails[] = [];
+
+  ts.simpleTraverse(ast, {
+    enter(node) {
+      if (node.type === 'NewExpression' && node.callee.type === 'Identifier' && node.callee.name.startsWith('Cfn')) {
+        // Check if the second argument is a literal with value 'Resource'
+        if (node.arguments.length > 1 && node.arguments[1].type === 'Literal' && node.arguments[1].value === 'Resource') {
+          const moduleName = extractModuleName(filePath);
+          const properties: string[] = [];
+          if (node.arguments.length > 2 && node.arguments[2].type === 'ObjectExpression') {
+            node.arguments[2].properties.forEach((prop: any) => {
+              if (prop.type === 'Property') {
+                properties.push(prop.key.name);
+              }
+            });
+          }
+          results.push({
+            module: moduleName,
+            name: node.callee.name,
+            props: properties,
+          });
+        }
+      }
+    },
+  });
+
+  return results;
+};
+
 const main = async () => {
   const directoryPath = process.argv[2]; // コマンドライン引数からディレクトリパスを取得
   if (!directoryPath) {
     console.error('Please provide the directory path');
     process.exit(1);
   }
-  const allPropsDetails: CfnPropsDetails[] = [];
+  const l1Properties: CfnPropsDetails[] = [];
+  const l2Properties: CfnPropsDetails[] = [];
 
   try {
-    const files = await findTypeScriptFiles(directoryPath);
-    for (const file of files) {
+    const l1Files = await findGeneratedTypeScriptFiles(directoryPath);
+    for (const file of l1Files) {
       const propDetails = await extractCfnProperties(file);
       if (propDetails) {
-        allPropsDetails.push(propDetails);
+        l1Properties.push(propDetails);
       }
     }
-    console.log(JSON.stringify(allPropsDetails, null, 2));
+
+    const l2Files = await findManualTypeScriptFiles(directoryPath);
+    for (const file of l2Files) {
+      const cfnDetails = await extractCfnConstructorProperties(file);
+      l2Properties.push(...cfnDetails);
+    }
+    // JSONで結果を表示または保存
+    console.log(JSON.stringify(l2Properties, null, 2));
+    // console.log(JSON.stringify(l1Properties, null, 2));
   } catch (error) {
     console.error('Error:', error);
   }
