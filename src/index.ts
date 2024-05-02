@@ -150,9 +150,8 @@ const main = async () => {
     }
 
     const missingProperties = compareProps(l1Properties, l2Properties);
-    console.log('Properties from L1:', JSON.stringify(l1Properties, null, 2));
-    console.log('Properties from L2:', JSON.stringify(l2Properties, null, 2));
-    console.log('Missing properties from L2:', JSON.stringify(missingProperties, null, 2));
+
+    fs.writeFileSync('missingProperties.json', JSON.stringify(missingProperties, null, 2), 'utf8');
   } catch (error) {
     console.error('Error:', error);
   }
