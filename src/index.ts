@@ -22,15 +22,15 @@ const findManualTypeScriptFiles = async (srcDir: string): Promise<string[]> => {
   });
 };
 
-
+// aws-cdk-lib/aws-route53/lib/record-set.ts という文字列を前提に、aws-route53を返す関数
 const extractModuleName = (filePath: string): string => {
   const parts = filePath.split(path.sep);
   const libIndex = parts.indexOf('lib');
   return parts[libIndex - 1];
 };
 
-// TypeScriptファイルを解析し、CfnXxxPropsのプロパティを抽出する関数
-const extractCfnProperties = async (filePath: string): Promise<CfnPropsDetails | null> => {
+// CfnXxxPropsのプロパティを抽出する関数
+const extractCfnProperties = async (filePath: string): Promise<CfnPropsDetails[]> => {
   const code = fs.readFileSync(filePath, 'utf8');
   const ast = ts.parse(code, {
     loc: true,
@@ -40,25 +40,32 @@ const extractCfnProperties = async (filePath: string): Promise<CfnPropsDetails |
     useJSXTextNode: false,
   });
 
-  let result: CfnPropsDetails | null = null;
+  let results: CfnPropsDetails[] = [];
 
   ts.simpleTraverse(ast, {
     enter(node) {
       if (node.type === 'TSInterfaceDeclaration' && node.id.name.endsWith('Props')) {
-        const properties = node.body.body.map((prop: any) => prop.key.name);
+        const properties = node.body.body.map((prop: any) => {
+          if (prop.type === 'TSPropertySignature' && prop.key.type === 'Identifier') {
+            return prop.key.name;
+          }
+          return null; // 非識別子プロパティは無視
+        }).filter(propName => propName !== null); // nullを除去
+
         const moduleName = extractModuleName(filePath);
-        result = {
+        results.push({
           module: moduleName,
-          name: node.id.name,
+          name: node.id.name.replace('Props', ''),
           props: properties,
-        };
+        });
       }
     },
   });
 
-  return result;
+  return results;
 };
 
+// L2コンストラクにおけるL1コンストラクタへの引数を抽出する関数
 const extractCfnConstructorProperties = async (filePath: string): Promise<CfnPropsDetails[]> => {
   const code = fs.readFileSync(filePath, 'utf8');
   const ast = ts.parse(code, {
@@ -98,8 +105,28 @@ const extractCfnConstructorProperties = async (filePath: string): Promise<CfnPro
   return results;
 };
 
+const compareProps = (l1: CfnPropsDetails[], l2: CfnPropsDetails[]) => {
+  const results: any[] = [];
+
+  l1.forEach(l1Item => {
+    const l2Item = l2.find(item => item.module === l1Item.module && item.name.replace('Cfn', '') === l1Item.name.replace('Cfn', ''));
+    if (l2Item) {
+      const missingProps = l1Item.props.filter(prop => !l2Item.props.includes(prop));
+      if (missingProps.length > 0) {
+        results.push({
+          module: l1Item.module,
+          name: l1Item.name,
+          missingProps: missingProps,
+        });
+      }
+    }
+  });
+
+  return results;
+};
+
 const main = async () => {
-  const directoryPath = process.argv[2]; // コマンドライン引数からディレクトリパスを取得
+  const directoryPath = process.argv[2];
   if (!directoryPath) {
     console.error('Please provide the directory path');
     process.exit(1);
@@ -112,7 +139,7 @@ const main = async () => {
     for (const file of l1Files) {
       const propDetails = await extractCfnProperties(file);
       if (propDetails) {
-        l1Properties.push(propDetails);
+        l1Properties.push(...propDetails);
       }
     }
 
@@ -121,9 +148,11 @@ const main = async () => {
       const cfnDetails = await extractCfnConstructorProperties(file);
       l2Properties.push(...cfnDetails);
     }
-    // JSONで結果を表示または保存
-    console.log(JSON.stringify(l2Properties, null, 2));
-    // console.log(JSON.stringify(l1Properties, null, 2));
+
+    const missingProperties = compareProps(l1Properties, l2Properties);
+    console.log('Properties from L1:', JSON.stringify(l1Properties, null, 2));
+    console.log('Properties from L2:', JSON.stringify(l2Properties, null, 2));
+    console.log('Missing properties from L2:', JSON.stringify(missingProperties, null, 2));
   } catch (error) {
     console.error('Error:', error);
   }
