@@ -149,8 +149,14 @@ const main = async () => {
       l2Properties.push(...cfnDetails);
     }
 
-    const missingProperties = compareProps(l1Properties, l2Properties);
-
+    const missingProperties = compareProps(l1Properties, l2Properties)
+      .sort((a, b) => {
+        const moduleCompare = a.module.localeCompare(b.module);
+        if (moduleCompare !== 0) {
+          return moduleCompare;
+        }
+        return a.name.localeCompare(b.name);
+      });
     fs.writeFileSync('missingProperties.json', JSON.stringify(missingProperties, null, 2), 'utf8');
   } catch (error) {
     console.error('Error:', error);
