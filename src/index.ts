@@ -12,8 +12,6 @@ interface CfnPropsDetails {
 interface DirectoryConfig {
   awsCdkDir: string;
   cdkLibDir: string;
-  moduleName: string;
-  modulePath: string;
 }
 
 interface ModuleAnalysisResult {
@@ -22,46 +20,50 @@ interface ModuleAnalysisResult {
   errors?: string[];
 }
 
-// alphaモジュールを検索する関数
-const findAlphaModules = async (baseDir: string): Promise<string[]> => {
-  const pattern = path.join(baseDir, 'aws-*-alpha');
-  const alphaModules = await glob(pattern);
-  console.log(`Found alpha modules: ${alphaModules.length}`);
-  return alphaModules;
+// すべてのモジュールを検索する関数
+const findAllModules = async (config: DirectoryConfig): Promise<{
+  alphaModules: string[];
+  cdkLibModules: string[];
+}> => {
+  // alphaモジュールを検索
+  const alphaPattern = path.join(config.awsCdkDir, 'aws-*-alpha');
+  const alphaModules = await glob(alphaPattern);
+
+  // aws-cdk-libモジュールを検索
+  const cdkLibPattern = path.join(config.cdkLibDir, 'aws-*');
+  const cdkLibModules = await glob(cdkLibPattern);
+
+  console.log(`Found ${alphaModules.length} alpha modules and ${cdkLibModules.length} CDK lib modules`);
+
+  return {
+    alphaModules,
+    cdkLibModules,
+  };
 };
 
-// L1定義（generated.ts）ファイルを検索する関数
-const findGeneratedTypeScriptFiles = async (config: DirectoryConfig): Promise<string[]> => {
-  // alphaモジュール名から対応するCDK Libモジュール名を取得
-  const moduleName = config.moduleName
-    .replace('-alpha', '')
-    .replace('aws-', '');
-
-  // aws-cdk-lib内の対応するパスを構築
-  const cdkLibModulePath = path.join(config.cdkLibDir, 'aws-' + moduleName);
-  console.log(`Looking for generated files in: ${cdkLibModulePath}`);
-
-  // generated.tsファイルを検索
-  const pattern = path.join(cdkLibModulePath, '**', '*.generated.ts');
+// generated.tsファイルを検索する関数
+const findGeneratedTypeScriptFiles = async (modulePath: string): Promise<string[]> => {
+  console.log(`Looking for generated files in: ${modulePath}`);
+  const pattern = path.join(modulePath, '**', '*.generated.ts');
   const files = await glob(pattern);
-  console.log(`Found ${files.length} generated files for ${moduleName}`);
+  console.log(`Found ${files.length} generated files`);
   return files;
 };
 
-// L2実装ファイルを検索する関数
-const findManualTypeScriptFiles = async (config: DirectoryConfig): Promise<string[]> => {
-  console.log(`Looking for L2 files in: ${config.modulePath}`);
-  const pattern = path.join(config.modulePath, '**', '*.ts');
+// 実装ファイルを検索する関数
+const findImplementationFiles = async (modulePath: string): Promise<string[]> => {
+  console.log(`Looking for implementation files in: ${modulePath}`);
+  const pattern = path.join(modulePath, '**', '*.ts');
   const ignorePatterns = [
-    path.join(config.modulePath, '**', '*.generated.ts'),
-    path.join(config.modulePath, '**', '*.d.ts'),
-    path.join(config.modulePath, '**/test/**'),
-    path.join(config.modulePath, '**/__tests__/**'),
-    path.join(config.modulePath, '**/node_modules/**'),
+    path.join(modulePath, '**', '*.generated.ts'),
+    path.join(modulePath, '**', '*.d.ts'),
+    path.join(modulePath, '**/test/**'),
+    path.join(modulePath, '**/__tests__/**'),
+    path.join(modulePath, '**/node_modules/**'),
   ];
 
   const files = await glob(pattern, { ignore: ignorePatterns });
-  console.log(`Found ${files.length} L2 implementation files`);
+  console.log(`Found ${files.length} implementation files`);
   return files;
 };
 
@@ -171,14 +173,14 @@ const extractCfnConstructorProperties = async (filePath: string): Promise<CfnPro
 };
 
 // 単一モジュールの解析を行う関数
-const analyzeModule = async (config: DirectoryConfig): Promise<ModuleAnalysisResult> => {
-  console.log(`\nAnalyzing module: ${config.moduleName}`);
+const analyzeModule = async (modulePath: string, l1Path: string): Promise<ModuleAnalysisResult> => {
+  console.log(`\nAnalyzing module: ${path.basename(modulePath)}`);
 
   const l1Properties: CfnPropsDetails[] = [];
   const l2Properties: CfnPropsDetails[] = [];
 
   // L1定義の解析
-  const l1Files = await findGeneratedTypeScriptFiles(config);
+  const l1Files = await findGeneratedTypeScriptFiles(l1Path);
   console.log(`Processing ${l1Files.length} L1 definition files`);
 
   for (const file of l1Files) {
@@ -190,7 +192,7 @@ const analyzeModule = async (config: DirectoryConfig): Promise<ModuleAnalysisRes
   }
 
   // L2実装の解析
-  const l2Files = await findManualTypeScriptFiles(config);
+  const l2Files = await findImplementationFiles(modulePath);
   console.log(`Processing ${l2Files.length} L2 implementation files`);
 
   for (const file of l2Files) {
@@ -206,7 +208,7 @@ const analyzeModule = async (config: DirectoryConfig): Promise<ModuleAnalysisRes
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return {
-    moduleName: config.moduleName,
+    moduleName: path.basename(modulePath),
     missingProperties,
   };
 };
@@ -236,47 +238,69 @@ const compareProps = (l1: CfnPropsDetails[], l2: CfnPropsDetails[]) => {
   return results;
 };
 
-const main = async () => {
-  const awsCdkDir = process.argv[2];
-  const cdkLibDir = process.argv[3];
+// alphaモジュールのL1パスを解決する関数
+const resolveL1PathForAlpha = (config: DirectoryConfig, alphaModulePath: string): string => {
+  const moduleName = path.basename(alphaModulePath)
+    .replace('-alpha', '')
+    .replace('aws-', '');
+  return path.join(config.cdkLibDir, 'aws-' + moduleName);
+};
 
-  if (!awsCdkDir || !cdkLibDir) {
-    console.error('Please provide both @aws-cdk and aws-cdk-lib directory paths');
-    console.error('Usage: ts-node script.ts <@aws-cdk-dir> <aws-cdk-lib-dir>');
+const main = async () => {
+  const packagesDir = process.argv[2];
+
+  if (!packagesDir) {
+    console.error('Please provide the packages directory path');
+    console.error('Usage: ts-node script.ts <packages-dir>');
     process.exit(1);
   }
 
+  // 必要なディレクトリパスを構築
+  const awsCdkDir = path.join(packagesDir, '@aws-cdk');
+  const cdkLibDir = path.join(packagesDir, 'aws-cdk-lib');
+
   // ディレクトリの存在確認
   if (!fs.existsSync(awsCdkDir) || !fs.existsSync(cdkLibDir)) {
-    console.error('One or both of the specified directories do not exist:');
+    console.error('Required directories do not exist:');
     console.error(`@aws-cdk dir: ${awsCdkDir} (exists: ${fs.existsSync(awsCdkDir)})`);
     console.error(`aws-cdk-lib dir: ${cdkLibDir} (exists: ${fs.existsSync(cdkLibDir)})`);
     process.exit(1);
   }
+
+  const config: DirectoryConfig = {
+    awsCdkDir,
+    cdkLibDir,
+  };
 
   try {
     console.log('Starting analysis...');
     console.log(`@aws-cdk directory: ${awsCdkDir}`);
     console.log(`aws-cdk-lib directory: ${cdkLibDir}`);
 
-    // alphaモジュールの一覧を取得
-    const alphaModulePaths = await findAlphaModules(awsCdkDir);
-    console.log(`\nFound ${alphaModulePaths.length} alpha modules to analyze`);
+    // すべてのモジュールを検索
+    const { alphaModules, cdkLibModules } = await findAllModules(config);
 
     // 各モジュールを解析
     const results: ModuleAnalysisResult[] = [];
-    for (const modulePath of alphaModulePaths) {
+
+    // alphaモジュールの解析
+    for (const modulePath of alphaModules) {
       try {
-        const moduleConfig: DirectoryConfig = {
-          awsCdkDir,
-          cdkLibDir,
-          moduleName: path.basename(modulePath),
-          modulePath: modulePath,
-        };
-        const result = await analyzeModule(moduleConfig);
+        const l1Path = resolveL1PathForAlpha(config, modulePath);
+        const result = await analyzeModule(modulePath, l1Path);
         results.push(result);
       } catch (error) {
-        console.error(`Error analyzing ${modulePath}:`, error);
+        console.error(`Error analyzing alpha module ${modulePath}:`, error);
+      }
+    }
+
+    // CDK Libモジュールの解析
+    for (const modulePath of cdkLibModules) {
+      try {
+        const result = await analyzeModule(modulePath, modulePath);
+        results.push(result);
+      } catch (error) {
+        console.error(`Error analyzing CDK lib module ${modulePath}:`, error);
       }
     }
 

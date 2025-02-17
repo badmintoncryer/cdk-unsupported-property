@@ -26,6 +26,6 @@ npm install -g ts-node
 git clone https://github.com/badmintoncryer/cdk-unsupported-property.git
 cd cdk-unsupported-property
 npm install
-ts-node src/index.ts ../aws-cdk/packages/aws-cdk-lib
+ts-node src/index.ts ../aws-cdk/packages
 // create `missingProperties.json`
 ```
