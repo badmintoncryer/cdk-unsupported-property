@@ -1,4 +1,3 @@
-// dependencies
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from '@typescript-eslint/typescript-estree';
@@ -10,27 +9,56 @@ interface CfnPropsDetails {
   props: string[];
 }
 
-// 自動生成されたTypeScriptファイルを検索する関数
-const findGeneratedTypeScriptFiles = async (srcDir: string): Promise<string[]> => {
-  return glob(`${srcDir}/**/*.generated.ts`);
+interface DirectoryConfig {
+  alphaDir: string;
+  cdkLibDir: string;
+}
+
+// L1定義（generated.ts）ファイルを検索する関数
+const findGeneratedTypeScriptFiles = async (config: DirectoryConfig, moduleType: string): Promise<string[]> => {
+  if (moduleType === 'alpha') {
+    // alphaモジュールの場合、対応するaws-cdk-libのgenerated.tsを探す
+    const alphaModuleName = path.basename(config.alphaDir).replace('-alpha', '');
+    return glob(`${config.cdkLibDir}/${alphaModuleName}/**/*.generated.ts`);
+  }
+  return glob(`${config.cdkLibDir}/**/*.generated.ts`);
 };
 
-// 手動作成されたTypeScriptファイルを検索する関数
-const findManualTypeScriptFiles = async (srcDir: string): Promise<string[]> => {
-  return glob(`${srcDir}/**/*.ts`, {
-    ignore: `${srcDir}/**/*.generated.ts`,
+// L2実装ファイルを検索する関数
+const findManualTypeScriptFiles = async (config: DirectoryConfig, moduleType: string): Promise<string[]> => {
+  const searchDir = moduleType === 'alpha' ? config.alphaDir : config.cdkLibDir;
+  return glob(`${searchDir}/**/*.ts`, {
+    ignore: `${searchDir}/**/*.generated.ts`,
   });
 };
 
-// aws-cdk-lib/aws-route53/lib/record-set.ts という文字列を前提に、aws-route53を返す関数
-const extractModuleName = (filePath: string): string => {
+// モジュール名を抽出する関数を改善
+const extractModuleName = (filePath: string, config: DirectoryConfig): string => {
   const parts = filePath.split(path.sep);
+
+  // alphaモジュールの場合
+  if (filePath.includes(config.alphaDir)) {
+    const moduleName = path.basename(config.alphaDir).replace('-alpha', '');
+    return moduleName.replace('aws-', '');
+  }
+
+  // aws-cdk-libの場合
   const libIndex = parts.indexOf('lib');
-  return parts[libIndex - 1];
+  if (libIndex > 0) {
+    return parts[libIndex - 1].replace('aws-', '');
+  }
+
+  // aws-cdk-lib直下のモジュールの場合
+  const moduleNameIndex = parts.findIndex(part => part.startsWith('aws-'));
+  if (moduleNameIndex >= 0) {
+    return parts[moduleNameIndex].replace('aws-', '');
+  }
+
+  throw new Error(`Could not extract module name from path: ${filePath}`);
 };
 
-// CfnXxxPropsのプロパティを抽出する関数
-const extractCfnProperties = async (filePath: string): Promise<CfnPropsDetails[]> => {
+// L1プロパティを抽出する関数は変更なし
+const extractCfnProperties = async (filePath: string, config: DirectoryConfig): Promise<CfnPropsDetails[]> => {
   const code = fs.readFileSync(filePath, 'utf8');
   const ast = ts.parse(code, {
     loc: true,
@@ -49,10 +77,10 @@ const extractCfnProperties = async (filePath: string): Promise<CfnPropsDetails[]
           if (prop.type === 'TSPropertySignature' && prop.key.type === 'Identifier') {
             return prop.key.name;
           }
-          return null; // 非識別子プロパティは無視
-        }).filter(propName => propName !== null); // nullを除去
+          return null;
+        }).filter(propName => propName !== null);
 
-        const moduleName = extractModuleName(filePath);
+        const moduleName = extractModuleName(filePath, config);
         results.push({
           module: moduleName,
           name: node.id.name.replace('Props', ''),
@@ -65,8 +93,8 @@ const extractCfnProperties = async (filePath: string): Promise<CfnPropsDetails[]
   return results;
 };
 
-// L2コンストラクにおけるL1コンストラクタへの引数を抽出する関数
-const extractCfnConstructorProperties = async (filePath: string): Promise<CfnPropsDetails[]> => {
+// L2コンストラクタのプロパティ抽出関数も同様に設定を受け取るように修正
+const extractCfnConstructorProperties = async (filePath: string, config: DirectoryConfig): Promise<CfnPropsDetails[]> => {
   const code = fs.readFileSync(filePath, 'utf8');
   const ast = ts.parse(code, {
     loc: true,
@@ -81,9 +109,8 @@ const extractCfnConstructorProperties = async (filePath: string): Promise<CfnPro
   ts.simpleTraverse(ast, {
     enter(node) {
       if (node.type === 'NewExpression' && node.callee.type === 'Identifier' && node.callee.name.startsWith('Cfn')) {
-        // Check if the second argument is a literal with value 'Resource'
         if (node.arguments.length > 1 && node.arguments[1].type === 'Literal' && node.arguments[1].value === 'Resource') {
-          const moduleName = extractModuleName(filePath);
+          const moduleName = extractModuleName(filePath, config);
           const properties: string[] = [];
           if (node.arguments.length > 2 && node.arguments[2].type === 'ObjectExpression') {
             node.arguments[2].properties.forEach((prop: any) => {
@@ -105,6 +132,7 @@ const extractCfnConstructorProperties = async (filePath: string): Promise<CfnPro
   return results;
 };
 
+// 比較関数は変更なし
 const compareProps = (l1: CfnPropsDetails[], l2: CfnPropsDetails[]) => {
   const results: any[] = [];
 
@@ -126,26 +154,37 @@ const compareProps = (l1: CfnPropsDetails[], l2: CfnPropsDetails[]) => {
 };
 
 const main = async () => {
-  const directoryPath = process.argv[2];
-  if (!directoryPath) {
-    console.error('Please provide the directory path');
+  const alphaDir = process.argv[2];
+  const cdkLibDir = process.argv[3];
+
+  if (!alphaDir || !cdkLibDir) {
+    console.error('Please provide both alpha module directory and aws-cdk-lib directory paths');
+    console.error('Usage: ts-node script.ts <alpha-module-dir> <aws-cdk-lib-dir>');
     process.exit(1);
   }
+
+  const config: DirectoryConfig = {
+    alphaDir,
+    cdkLibDir,
+  };
+
   const l1Properties: CfnPropsDetails[] = [];
   const l2Properties: CfnPropsDetails[] = [];
 
   try {
-    const l1Files = await findGeneratedTypeScriptFiles(directoryPath);
+    // alphaモジュールのL1定義を取得
+    const l1Files = await findGeneratedTypeScriptFiles(config, 'alpha');
     for (const file of l1Files) {
-      const propDetails = await extractCfnProperties(file);
+      const propDetails = await extractCfnProperties(file, config);
       if (propDetails) {
         l1Properties.push(...propDetails);
       }
     }
 
-    const l2Files = await findManualTypeScriptFiles(directoryPath);
+    // alphaモジュールのL2実装を取得
+    const l2Files = await findManualTypeScriptFiles(config, 'alpha');
     for (const file of l2Files) {
-      const cfnDetails = await extractCfnConstructorProperties(file);
+      const cfnDetails = await extractCfnConstructorProperties(file, config);
       l2Properties.push(...cfnDetails);
     }
 
@@ -157,7 +196,10 @@ const main = async () => {
         }
         return a.name.localeCompare(b.name);
       });
-    fs.writeFileSync('missingProperties.json', JSON.stringify(missingProperties, null, 2), 'utf8');
+
+    const outputPath = path.join(process.cwd(), 'missingProperties.json');
+    fs.writeFileSync(outputPath, JSON.stringify(missingProperties, null, 2), 'utf8');
+    console.log(`Results written to ${outputPath}`);
   } catch (error) {
     console.error('Error:', error);
   }
