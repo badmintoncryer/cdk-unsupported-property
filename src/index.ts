@@ -304,14 +304,17 @@ const main = async () => {
       }
     }
 
-    // 結果を整形して出力
-    const outputResult = results.reduce((acc, result) => {
-      acc[result.moduleName] = result.missingProperties;
-      return acc;
-    }, {} as Record<string, any>);
+    // 結果を従来形式に整形
+    const flattenedResults = results.flatMap(result =>
+      result.missingProperties.map(prop => ({
+        module: result.moduleName,
+        name: prop.name,
+        missingProps: prop.missingProps,
+      })),
+    );
 
     const outputPath = path.join(process.cwd(), 'missingProperties.json');
-    fs.writeFileSync(outputPath, JSON.stringify(outputResult, null, 2), 'utf8');
+    fs.writeFileSync(outputPath, JSON.stringify(flattenedResults, null, 2), 'utf8');
     console.log(`\nResults written to ${outputPath}`);
 
     // サマリーの出力
