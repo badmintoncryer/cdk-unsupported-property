@@ -150,7 +150,7 @@ const extractCfnConstructorProperties = async (filePath: string): Promise<CfnPro
               node.arguments[2].properties.forEach((prop: any) => {
                 if (prop.type === 'Property' && prop.key.type === 'Identifier') {
                   properties.push(prop.key.name);
-                } // スプレッド演算子で展開されたプロパティを処理
+                } /* eslint-disable-next-line brace-style */
                 else if (prop.type === 'SpreadElement' && prop.argument.type === 'Identifier') {
                   // スプレッド演算子で使用されている変数名を取得
                   const spreadVarName = prop.argument.name;
