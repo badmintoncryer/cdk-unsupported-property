@@ -29,8 +29,7 @@ const extractCfnConstructorProperties = (filePath: string): { name: string; prop
             node.arguments[2].properties.forEach((prop: any) => {
               if (prop.type === 'Property' && prop.key.type === 'Identifier') {
                 properties.push(prop.key.name);
-              }
-              // スプレッド演算子で展開されたプロパティを処理
+              } // スプレッド演算子で展開されたプロパティを処理
               else if (prop.type === 'SpreadElement' && prop.argument.type === 'Identifier') {
                 // スプレッド演算子で使用されている変数名を取得
                 const spreadVarName = prop.argument.name;
