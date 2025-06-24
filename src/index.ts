@@ -146,9 +146,37 @@ const extractCfnConstructorProperties = async (filePath: string): Promise<CfnPro
 
             const properties: string[] = [];
             if (node.arguments.length > 2 && node.arguments[2].type === 'ObjectExpression') {
+              // 直接指定されたプロパティを処理
               node.arguments[2].properties.forEach((prop: any) => {
                 if (prop.type === 'Property' && prop.key.type === 'Identifier') {
                   properties.push(prop.key.name);
+                }
+                // スプレッド演算子で展開されたプロパティを処理
+                else if (prop.type === 'SpreadElement' && prop.argument.type === 'Identifier') {
+                  // スプレッド演算子で使用されている変数名を取得
+                  const spreadVarName = prop.argument.name;
+                  
+                  // このスコープ内でスプレッド変数の宣言を探す
+                  // 単純に同じファイル内の変数宣言を探す方法
+                  ts.simpleTraverse(ast, {
+                    enter(scopeNode) {
+                      // 変数宣言を探す
+                      if (scopeNode.type === 'VariableDeclarator' && 
+                          scopeNode.id.type === 'Identifier' && 
+                          scopeNode.id.name === spreadVarName &&
+                          scopeNode.init && 
+                          scopeNode.init.type === 'ObjectExpression') {
+                        
+                        // 変数の中身（オブジェクトのプロパティ）を取得
+                        scopeNode.init.properties.forEach((spreadProp: any) => {
+                          if (spreadProp.type === 'Property' && 
+                              spreadProp.key.type === 'Identifier') {
+                            properties.push(spreadProp.key.name);
+                          }
+                        });
+                      }
+                    }
+                  });
                 }
               });
             }
