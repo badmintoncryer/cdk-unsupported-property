@@ -94,9 +94,8 @@ const collectTypeDefinitions = (ast: any): Map<string, any> => {
       // インターフェース定義
       if (node.type === 'TSInterfaceDeclaration' && node.id?.name) {
         typeMap.set(node.id.name, node);
-      }
-      // 型エイリアス定義
-      else if (node.type === 'TSTypeAliasDeclaration' && node.id?.name) {
+      } else if (node.type === 'TSTypeAliasDeclaration' && node.id?.name) {
+        // 型エイリアス定義
         typeMap.set(node.id.name, node);
       }
     },
@@ -239,9 +238,8 @@ const extractNestedPropsFromType = (
       // インターフェース定義の場合
       if (typeDefinition.type === 'TSInterfaceDeclaration') {
         return extractPropsFromInterfaceBody(typeDefinition.body, typeMap, depth, newVisited);
-      }
-      // 型エイリアスの場合
-      else if (typeDefinition.type === 'TSTypeAliasDeclaration' && typeDefinition.typeAnnotation) {
+      } else if (typeDefinition.type === 'TSTypeAliasDeclaration' && typeDefinition.typeAnnotation) {
+        // 型エイリアスの場合
         return extractNestedPropsFromType(typeDefinition.typeAnnotation, typeMap, depth, undefined, newVisited);
       }
     }
@@ -380,9 +378,8 @@ const extractNestedPropsFromObjectExpression = (objExpr: any, depth: number = 0)
       }
 
       nestedProps[propName] = propInfo;
-    }
-    // スプレッド構文の場合もサポート（将来の拡張用）
-    else if (prop.type === 'SpreadElement') {
+    } else if (prop.type === 'SpreadElement') {
+      // スプレッド構文の場合もサポート（将来の拡張用）
       // スプレッド構文は現時点では無視（複雑になるため）
     }
   }
