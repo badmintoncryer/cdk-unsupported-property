@@ -104,6 +104,28 @@ const collectTypeDefinitions = (ast: any): Map<string, any> => {
   return typeMap;
 };
 
+// 変数宣言を収集する補助関数（オブジェクトリテラルで初期化された変数のみ）
+const collectVariableDeclarations = (ast: any): Map<string, any> => {
+  const varMap = new Map<string, any>();
+
+  ts.simpleTraverse(ast, {
+    enter(node) {
+      // const/let/var 宣言
+      if (node.type === 'VariableDeclaration') {
+        for (const declarator of node.declarations) {
+          // 変数名がIdentifierで、初期化値がObjectExpressionの場合
+          if (declarator.id?.type === 'Identifier' &&
+              declarator.init?.type === 'ObjectExpression') {
+            varMap.set(declarator.id.name, declarator.init);
+          }
+        }
+      }
+    },
+  });
+
+  return varMap;
+};
+
 // 型名を抽出する補助関数（IdentifierとTSQualifiedNameに対応）
 const extractTypeName = (typeName: any): string | undefined => {
   if (!typeName) return undefined;
@@ -356,7 +378,11 @@ const extractCfnProperties = async (filePath: string): Promise<CfnPropsDetails[]
 };
 
 // オブジェクトリテラルからネストされたプロパティを抽出する補助関数
-const extractNestedPropsFromObjectExpression = (objExpr: any, depth: number = 0): { [key: string]: PropertyInfo } | undefined => {
+const extractNestedPropsFromObjectExpression = (
+  objExpr: any,
+  depth: number = 0,
+  varMap?: Map<string, any>,
+): { [key: string]: PropertyInfo } | undefined => {
   const MAX_DEPTH = 3; // 最大ネスト深度
   if (depth >= MAX_DEPTH || !objExpr || objExpr.type !== 'ObjectExpression') {
     return undefined;
@@ -371,16 +397,36 @@ const extractNestedPropsFromObjectExpression = (objExpr: any, depth: number = 0)
 
       // プロパティの値がオブジェクトリテラルの場合、再帰的に処理
       if (prop.value.type === 'ObjectExpression') {
-        const nested = extractNestedPropsFromObjectExpression(prop.value, depth + 1);
+        const nested = extractNestedPropsFromObjectExpression(prop.value, depth + 1, varMap);
         if (nested && Object.keys(nested).length > 0) {
           propInfo.nestedProps = nested;
+        }
+      } else if (prop.value.type === 'Identifier' && varMap) {
+        // プロパティ値が変数参照の場合、変数マップから定義を探す
+        const varName = prop.value.name;
+        const varDef = varMap.get(varName);
+        if (varDef && varDef.type === 'ObjectExpression') {
+          const nested = extractNestedPropsFromObjectExpression(varDef, depth + 1, varMap);
+          if (nested && Object.keys(nested).length > 0) {
+            propInfo.nestedProps = nested;
+          }
         }
       }
 
       nestedProps[propName] = propInfo;
-    } else if (prop.type === 'SpreadElement') {
-      // スプレッド構文の場合もサポート（将来の拡張用）
-      // スプレッド構文は現時点では無視（複雑になるため）
+    } else if (prop.type === 'SpreadElement' && varMap) {
+      // スプレッド構文の場合、スプレッド元を解決して全プロパティを展開
+      if (prop.argument?.type === 'Identifier') {
+        const varName = prop.argument.name;
+        const varDef = varMap.get(varName);
+        if (varDef && varDef.type === 'ObjectExpression') {
+          const spreadProps = extractNestedPropsFromObjectExpression(varDef, depth, varMap);
+          if (spreadProps) {
+            // スプレッド元のプロパティを全て追加
+            Object.assign(nestedProps, spreadProps);
+          }
+        }
+      }
     }
   }
 
@@ -401,6 +447,9 @@ const extractCfnConstructorProperties = async (filePath: string): Promise<CfnPro
 
     const results: CfnPropsDetails[] = [];
     const moduleName = extractModuleName(filePath);
+
+    // 変数宣言を収集
+    const varMap = collectVariableDeclarations(ast);
 
     ts.simpleTraverse(ast, {
       enter(node) {
@@ -428,13 +477,36 @@ const extractCfnConstructorProperties = async (filePath: string): Promise<CfnPro
 
                   // プロパティの値がオブジェクトリテラルの場合、ネストされたプロパティを抽出
                   if (prop.value.type === 'ObjectExpression') {
-                    const nested = extractNestedPropsFromObjectExpression(prop.value, 0);
+                    const nested = extractNestedPropsFromObjectExpression(prop.value, 0, varMap);
                     if (nested && Object.keys(nested).length > 0) {
                       propInfo.nestedProps = nested;
+                    }
+                  } else if (prop.value.type === 'Identifier') {
+                    // プロパティ値が変数参照の場合
+                    const varName = prop.value.name;
+                    const varDef = varMap.get(varName);
+                    if (varDef && varDef.type === 'ObjectExpression') {
+                      const nested = extractNestedPropsFromObjectExpression(varDef, 0, varMap);
+                      if (nested && Object.keys(nested).length > 0) {
+                        propInfo.nestedProps = nested;
+                      }
                     }
                   }
 
                   detailedProps[propName] = propInfo;
+                } else if (prop.type === 'SpreadElement' && prop.argument?.type === 'Identifier') {
+                  // スプレッド構文の場合、スプレッド元の全プロパティを展開
+                  const varName = prop.argument.name;
+                  const varDef = varMap.get(varName);
+                  if (varDef && varDef.type === 'ObjectExpression') {
+                    const spreadProps = extractNestedPropsFromObjectExpression(varDef, 0, varMap);
+                    if (spreadProps) {
+                      for (const [spreadPropName, spreadPropInfo] of Object.entries(spreadProps)) {
+                        properties.push(spreadPropName);
+                        detailedProps[spreadPropName] = spreadPropInfo;
+                      }
+                    }
+                  }
                 }
               }
             }
