@@ -136,7 +136,7 @@ const createTypeScriptProgram = (
     const compilerOptions: typescript.CompilerOptions = {
       target: typescript.ScriptTarget.ES2020,
       module: typescript.ModuleKind.CommonJS,
-      moduleResolution: typescript.ModuleResolutionKind.NodeJs,
+      moduleResolution: typescript.ModuleResolutionKind.Node10,
       allowJs: true,
       checkJs: false,
       noEmit: true,
