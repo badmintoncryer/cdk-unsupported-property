@@ -6,15 +6,9 @@ const project = new typescript.TypeScriptProject({
   codeCov: true,
   releaseWorkflow: false,
 
-  deps: ['@typescript-eslint/parser', 'glob', '@typescript-eslint/typescript-estree', 'typescript'], /* Runtime dependencies of this module. */
+  deps: ['@typescript-eslint/parser', 'glob', '@typescript-eslint/typescript-estree'], /* Runtime dependencies of this module. */
   // description: undefined,  /* The description is just a string that helps people understand the purpose of the package. */
   devDeps: ['@types/glob'], /* Build dependencies for this module. */
   // packageName: undefined,  /* The "name" in package.json. */
-
-  tsconfig: {
-    compilerOptions: {
-      skipLibCheck: true,
-    },
-  },
 });
 project.synth();
