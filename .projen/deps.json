@@ -67,15 +67,15 @@
       "type": "build"
     },
     {
-      "name": "@typescript-eslint/parser",
-      "type": "runtime"
-    },
-    {
       "name": "@typescript-eslint/typescript-estree",
       "type": "runtime"
     },
     {
       "name": "glob",
+      "type": "runtime"
+    },
+    {
+      "name": "typescript",
       "type": "runtime"
     }
   ],

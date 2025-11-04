@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from '@typescript-eslint/typescript-estree';
 import { glob } from 'glob';
+import * as typescript from 'typescript';
 
 interface PropertyInfo {
   name: string;
@@ -124,6 +125,116 @@ const collectVariableDeclarations = (ast: any): Map<string, any> => {
   });
 
   return varMap;
+};
+
+// TypeScript Programを作成してtype checkerを取得する
+const createTypeScriptProgram = (
+  filePath: string,
+): { program: typescript.Program; sourceFile: typescript.SourceFile; typeChecker: typescript.TypeChecker } | null => {
+  try {
+    // CompilerOptionsを設定
+    const compilerOptions: typescript.CompilerOptions = {
+      target: typescript.ScriptTarget.ES2020,
+      module: typescript.ModuleKind.CommonJS,
+      moduleResolution: typescript.ModuleResolutionKind.Node10,
+      allowJs: true,
+      checkJs: false,
+      noEmit: true,
+      skipLibCheck: true,
+      skipDefaultLibCheck: true,
+    };
+
+    // Programを作成
+    const program = typescript.createProgram([filePath], compilerOptions);
+    const sourceFile = program.getSourceFile(filePath);
+
+    if (!sourceFile) {
+      return null;
+    }
+
+    const typeChecker = program.getTypeChecker();
+
+    return { program, sourceFile, typeChecker };
+  } catch (error) {
+    console.error(`Failed to create TypeScript program for ${filePath}:`, error);
+    return null;
+  }
+};
+
+// 変数の型を解決する
+const resolveVariableType = (
+  varName: string,
+  typeChecker: typescript.TypeChecker,
+  sourceFile: typescript.SourceFile,
+): typescript.Type | null => {
+  try {
+    let variableType: typescript.Type | null = null;
+
+    // SourceFileを走査して変数宣言を探す
+    const visit = (node: typescript.Node) => {
+      if (typescript.isVariableDeclaration(node)) {
+        const name = node.name;
+        if (typescript.isIdentifier(name) && name.text === varName) {
+          const type = typeChecker.getTypeAtLocation(node);
+          if (type) {
+            variableType = type;
+          }
+        }
+      }
+      typescript.forEachChild(node, visit);
+    };
+
+    visit(sourceFile);
+    return variableType;
+  } catch (error) {
+    console.error(`Failed to resolve type for variable ${varName}:`, error);
+    return null;
+  }
+};
+
+// TypeScript型からネストプロパティを抽出する
+const extractNestedPropsFromTypeSymbol = (
+  type: typescript.Type,
+  typeChecker: typescript.TypeChecker,
+  depth: number = 0,
+  maxDepth: number = 5,
+): { [key: string]: PropertyInfo } | undefined => {
+  if (depth >= maxDepth) {
+    return undefined;
+  }
+
+  try {
+    const properties = typeChecker.getPropertiesOfType(type);
+    if (properties.length === 0) {
+      return undefined;
+    }
+
+    const nestedProps: { [key: string]: PropertyInfo } = {};
+
+    for (const prop of properties) {
+      const propName = prop.getName();
+      const propType = typeChecker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration!);
+
+      const propInfo: PropertyInfo = {
+        name: propName,
+      };
+
+      // プロパティの型がオブジェクト型の場合、再帰的にネストプロパティを抽出
+      if (propType.getProperties().length > 0) {
+        const nested = extractNestedPropsFromTypeSymbol(propType, typeChecker, depth + 1, maxDepth);
+        if (nested && Object.keys(nested).length > 0) {
+          propInfo.nestedProps = nested;
+        }
+      }
+
+      nestedProps[propName] = propInfo;
+    }
+
+    return Object.keys(nestedProps).length > 0 ? nestedProps : undefined;
+  } catch (error) {
+    console.error('Failed to extract nested props from type:', error);
+    return undefined;
+  }
 };
 
 // 型名を抽出する補助関数（IdentifierとTSQualifiedNameに対応）
@@ -451,6 +562,11 @@ const extractCfnConstructorProperties = async (filePath: string): Promise<CfnPro
     // 変数宣言を収集
     const varMap = collectVariableDeclarations(ast);
 
+    // TypeScript Programを作成して型情報を取得
+    const tsProgram = createTypeScriptProgram(filePath);
+    const typeChecker = tsProgram?.typeChecker;
+    const sourceFile = tsProgram?.sourceFile;
+
     ts.simpleTraverse(ast, {
       enter(node) {
         if (node.type === 'NewExpression' &&
@@ -486,9 +602,19 @@ const extractCfnConstructorProperties = async (filePath: string): Promise<CfnPro
                     const varName = prop.value.name;
                     const varDef = varMap.get(varName);
                     if (varDef && varDef.type === 'ObjectExpression') {
+                      // varMapにオブジェクトリテラルがある場合は既存のロジックを使用
                       const nested = extractNestedPropsFromObjectExpression(varDef, 0, varMap);
                       if (nested && Object.keys(nested).length > 0) {
                         propInfo.nestedProps = nested;
+                      }
+                    } else if (typeChecker && sourceFile) {
+                      // varMapにない場合は型情報を使用して解決
+                      const varType = resolveVariableType(varName, typeChecker, sourceFile);
+                      if (varType) {
+                        const nested = extractNestedPropsFromTypeSymbol(varType, typeChecker);
+                        if (nested && Object.keys(nested).length > 0) {
+                          propInfo.nestedProps = nested;
+                        }
                       }
                     }
                   }
