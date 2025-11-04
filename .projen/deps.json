@@ -67,10 +67,6 @@
       "type": "build"
     },
     {
-      "name": "@typescript-eslint/parser",
-      "type": "runtime"
-    },
-    {
       "name": "@typescript-eslint/typescript-estree",
       "type": "runtime"
     },
