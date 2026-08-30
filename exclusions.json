@@ -1,0 +1,13 @@
+{
+  "exclusions": [
+    {
+      "propPattern": "(^|\\.)tags$|Tags$",
+      "reason": "Taggable resources are configured via Tags.of(scope) / TagManager, not constructor props"
+    },
+    {
+      "construct": "aws-s3/CfnBucket",
+      "prop": "notificationConfiguration",
+      "reason": "Supported via bucket.addEventNotification(), applied by the BucketNotifications custom resource"
+    }
+  ]
+}
