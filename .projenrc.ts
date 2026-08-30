@@ -6,7 +6,7 @@ const project = new typescript.TypeScriptProject({
   codeCov: true,
   releaseWorkflow: false,
 
-  deps: ['glob', '@typescript-eslint/typescript-estree', 'typescript'], /* Runtime dependencies of this module. */
+  deps: ['glob', 'typescript'], /* Runtime dependencies of this module. */
   // description: undefined,  /* The description is just a string that helps people understand the purpose of the package. */
   devDeps: ['@types/glob'], /* Build dependencies for this module. */
   // packageName: undefined,  /* The "name" in package.json. */
@@ -17,6 +17,9 @@ const project = new typescript.TypeScriptProject({
     },
   },
 });
+
+// The TypeScript compiler API requires bitwise flag checks (ts.TypeFlags etc.)
+project.eslint?.addRules({ 'no-bitwise': 'off' });
 
 // Fix strip-ansi ESM/CommonJS compatibility issue
 project.package.addField('resolutions', {

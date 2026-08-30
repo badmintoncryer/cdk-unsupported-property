@@ -67,10 +67,6 @@
       "type": "build"
     },
     {
-      "name": "@typescript-eslint/typescript-estree",
-      "type": "runtime"
-    },
-    {
       "name": "glob",
       "type": "runtime"
     },
